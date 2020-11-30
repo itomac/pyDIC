@@ -24,7 +24,8 @@ import logging
 from matplotlib import animation
 import matplotlib.pyplot as plt
 
-from . import dic_tools as tools
+# from . import dic_tools as tools
+import dic_tools as tools
 
 # Logging:
 logger = logging.getLogger(__name__)
@@ -76,9 +77,9 @@ class GlavnoOkno(QtGui.QWidget):
         imctrlHbox = QtGui.QHBoxLayout()
 
         # Widgets:
-        self.openFolder = QtGui.QPushButton('Choose a .cih or .tif file', self)
+        self.openFolder = QtGui.QPushButton('Choose a .cih, .cihx or .tif file', self)
         self.openFolder.clicked.connect(self.open_file)
-        self.openFolder.setToolTip('Choose the .cih or .tif file to be read (if .tif, a sequence of every .tif image in directory is loaded).')
+        self.openFolder.setToolTip('Choose the .cih, .cihx or .tif file to be read (if .tif, a sequence of every .tif image in directory is loaded).')
 
         self.naprejButton = QtGui.QPushButton('Next', self)
         self.naprejButton.clicked.connect(self.select_image)
@@ -289,7 +290,7 @@ class GlavnoOkno(QtGui.QWidget):
         self.update_settings() # Use user-defined settings instead of default ones
         self.naprejButton.setEnabled(False)
         self.imw.setImage(np.zeros((100,100)))
-        selected_path = QtGui.QFileDialog.getOpenFileName(self, 'Select path to .cih or .tif file.', self.dir_path, filter=("cih (*.cih);; tiff (*.tif)"))[0]
+        selected_path = QtGui.QFileDialog.getOpenFileName(self, 'Select path to .cih, .cihx or .tif file.', self.dir_path, filter=("cih (*.cih);; cihx (*.cihx);; tiff (*.tif)"))[0]
         self.dir_path = os.path.dirname(selected_path)
         self.save_path = self.dir_path + '/DIC_results/'
         self.savepathLineEdit.setText(self.save_path)
@@ -321,7 +322,7 @@ class GlavnoOkno(QtGui.QWidget):
             self.image_type = self.info_dict['File Format'].lower()
 
             if self.image_type == 'mraw':
-                self.mraw_path = self.cih_path[:-4] + '.mraw'
+                self.mraw_path = os.path.splitext(self.cih_path)[0] + '.mraw'
             elif self.image_type in ['tif', 'tiff']:
                 _process_tif_images(self.dir_path)
             else:

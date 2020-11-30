@@ -17,8 +17,10 @@ import matplotlib.pyplot as plt
 import warnings
 import logging
 from tqdm import tqdm
+import pyMRAW
 
-from . import dic
+# from . import dic
+import dic
 
 # Disable warnings printout
 warnings.filterwarnings("ignore")
@@ -129,12 +131,43 @@ def _tiff_to_temporary_file(dir_path):
     return out_file, cih_file
 
 
+# def get_info(path):
+#     '''
+#     Get info from .cih file in path, return it as dict.
+
+#     :param path: Path to .cih file.
+#     :return: info_dict: .cih file contents as dict.
+#     '''
+#     wanted_info = ['Date',
+#                    'Camera Type',
+#                    'Record Rate(fps)',
+#                    'Shutter Speed(s)',
+#                    'Total Frame',
+#                    'Image Width',
+#                    'Image Height',
+#                    'File Format',
+#                    'EffectiveBit Depth',
+#                    'Comment Text',
+#                    'Color Bit']
+
+#     info_dict = collections.OrderedDict([])
+
+#     with open(path, 'r') as file:
+#         for line in file:
+#             line = line.rstrip().split(' : ')
+#             if line[0] in wanted_info:                
+#                 key, value = line[0], line[1]#[:20]
+#                 info_dict[key] = bytes(value, "utf-8").decode("unicode_escape") # Evaluate escape characters
+
+#     return info_dict
+
+
 def get_info(path):
     '''
-    Get info from .cih file in path, return it as dict.
+    Get info from .cih or .cihx file in path, return it as dict.
 
-    :param path: Path to .cih file.
-    :return: info_dict: .cih file contents as dict.
+    :param path: Path to .cih or .cihx file.
+    :return: info_dict: .cih or .cihx file contents as dict.
     '''
     wanted_info = ['Date',
                    'Camera Type',
@@ -148,16 +181,16 @@ def get_info(path):
                    'Comment Text',
                    'Color Bit']
 
-    info_dict = collections.OrderedDict([])
+    info_cih = pyMRAW.get_cih(path)
+    
+    if all(_ in info_cih.keys() for _ in wanted_info):
+        info_dict = collections.OrderedDict([])
+        for key in wanted_info:
+            info_dict[key] = bytes(str(info_cih[key]), "utf-8").decode("unicode_escape") # Evaluate escape characters
+        return info_dict
+    else:
+        raise ValueError('Missing keys in cih file.')
 
-    with open(path, 'r') as file:
-        for line in file:
-            line = line.rstrip().split(' : ')
-            if line[0] in wanted_info:                
-                key, value = line[0], line[1]#[:20]
-                info_dict[key] = bytes(value, "utf-8").decode("unicode_escape") # Evaluate escape characters
-
-    return info_dict
 
 
 def get_integer_translation(mraw_path, roi_reference, roi_size, file_shape, initial_only=False, n_im=0, progressBar=None):
