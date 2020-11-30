@@ -316,7 +316,7 @@ class GlavnoOkno(QtGui.QWidget):
         if not selected_path:
             error = 1
 
-        if file_extension == 'cih':
+        if file_extension == 'cih' or file_extension == 'cihx':
             self.cih_path = selected_path
             self.info_dict = tools.get_info(self.cih_path)
             self.image_type = self.info_dict['File Format'].lower()
