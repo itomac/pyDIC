@@ -9,7 +9,7 @@ import os
 import sys
 import glob
 import numpy as np
-import scipy.ndimage
+import imageio.v3 as iio
 import scipy.signal
 from scipy.interpolate import RectBivariateSpline
 import collections
@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import warnings
 import logging
 from tqdm import tqdm
+from atpbar import atpbar
 import pyMRAW
 
 # from . import dic
@@ -99,7 +100,7 @@ def _tiff_to_temporary_file(dir_path):
     if not os.path.isfile(out_file):
         with open(out_file, 'wb') as file:
             for image_file in im_path:
-                image = scipy.ndimage.imread(image_file).astype(np.uint16)
+                image = np.asarray(iio.imread(image_file), dtype=np.uint16)
                 image.tofile(file)
         file_shape = (len(im_path), image.shape[0], image.shape[1])
 
@@ -130,6 +131,25 @@ def _tiff_to_temporary_file(dir_path):
     
     return out_file, cih_file
 
+def get_frame(cih_file, frame_number):
+    '''
+    Get the `frame_number`-th image from the directory where the sequence of images
+    are stored together with `cih_file` and returns it as a numpy array. Function
+    assumes that images are stored as sequence of image files named as cih_file
+    in form: `cih-file-name_%d.ext`, where `%d` is the literal for frame number in form
+    `0, 1, ..., 10,... n` and `ext` is the supported file extension (png or tif).
+
+    :param cif_file: Path to .cih file containing image info.
+    :param frame_number: Frame number.
+    :return: The frame-th image as a numpy.array.
+    '''
+
+    info = get_info(cih_file)
+    path = os.path.splitext(cih_file)[0] + f'_{frame_number:d}.' + info['File Format'].lower()
+    image = iio.imread(path)
+    if info['EffectiveBit Depth'] == '8':
+        return np.asarray(image, dtype=np.uint8)
+    return np.asarray(image, dtype=np.uint16)
 
 # def get_info(path):
 #     '''
@@ -303,7 +323,7 @@ def get_simple_translation(mraw_path, roi_reference, roi_size, file_shape, progr
     return results, increment
 
 
-def get_rigid_movement(mraw_path, roi_reference, roi_size, file_shape, progressBar=None, tol=1e-6, maxiter=100, int_order=1, increment=1, crop=False, debug=False):
+def get_rigid_movement(mraw_path, roi_reference, roi_size, file_shape=None, progressBar=None, tol=1e-6, maxiter=100, int_order=1, increment=1, crop=False, debug=False):
     '''
     Get rigid body movement (translation and rotation) data from image, using the Newton-Gauss optimization method with
     a Zero Normalized Cross Correlation based DIC algorithm.
@@ -320,15 +340,23 @@ def get_rigid_movement(mraw_path, roi_reference, roi_size, file_shape, progressB
     :param: crop: Border size to crop loaded images (if 0, do not crop).
     :param: debug: If True, display debug output.
     '''
-    memmap = np.memmap(mraw_path, dtype=np.uint16, mode='r', shape=file_shape)  # Map to all images in file
-    
-    memmap = memmap[::increment]                            # Apply sequence increment
-    N_inc = len(memmap)
-    pbar = tqdm(total=N_inc, ncols=tqdm_width)                      # Text prograss bar
+    file_info = get_info(mraw_path)
+    if file_info['File Format'].lower() == 'mraw':
+        memmap = np.memmap(mraw_path, dtype=np.uint16, mode='r', shape=file_shape)  # Map to all images in file
+        
+        memmap = memmap[::increment]                            # Apply sequence increment
+        N_inc = len(memmap)
+        F = memmap[0]                                           # Initial image of the sequence is only used once.
+    elif file_info['File Format'].lower() in ['png', 'tif']:
+        N_inc = int(file_info['Total Frame'])
+        file_shape = (N_inc, int(file_info['Image Height']), int(file_info['Image Width']))
+        F = get_frame(mraw_path, frame_number=0)
+
+    # pbar = tqdm(total=N_inc, ncols=tqdm_width)                      # Text prograss bar
     errors = {}                                             # Initialize warnings dictionary
 
     # Precomputable stuff:
-    F = memmap[0]                                           # Initial image of the sequence is only used once.
+    # F = memmap[0]                                           # Initial image of the sequence is only used once.
     roi_reference = np.asarray(roi_reference)
     ROI = _get_roi_image(F, roi_reference, roi_size)        # First ROI image, used for the initial guess.
     ROI_st = (np.mean(ROI), np.std(ROI))                    # Mean and standard deviation of ROI gray values.
@@ -348,22 +376,27 @@ def get_rigid_movement(mraw_path, roi_reference, roi_size, file_shape, progressB
     p_ref = np.array([in_guess[0], in_guess[1], 0.])        # Initialize a reference for all following calculations.
 
     # Loop through all the images in .mraw file:
-    pbar.update(1)
-    for i in range(1, len(memmap)):                         # First image was loaded already.
+    # pbar.update(1)
+    for i in atpbar(range(1, N_inc), time_track=True):
+        if file_info['File Format'].lower() == 'mraw':
+            G = memmap[i]
+        elif file_info['File Format'].lower() in ['png', 'tif']:
+            G = get_frame(mraw_path, frame_number=i)
+
         if crop:
             roi_translation = (results[-1, :2]).astype(int)         # Last calculated integer displacement
             new_roi_reference = roi_reference + roi_translation     # Shift cropped section new position
             crop_slice = _crop_with_border_slice(new_roi_reference, roi_size, crop) # Calculate crop indices for new image section
             
             if _is_in_image(crop_slice, file_shape): # If still inside image frame
-                G = memmap[i][crop_slice]                                   # Load the next target image.
+                G = G[crop_slice]                                   # Load the next target image.
             else:
                 roi_translation = np.zeros(2, dtype=int)            # If crop indices outside image frame: don't crop
-                G = memmap[i]
+                # G = memmap[i]
 
         else:
             roi_translation = np.zeros(2, dtype=int)
-            G = memmap[i]
+            # G = memmap[i]
 
         h, w = G.shape                                      # Get the shape of the current image for interpolation.
         spl = RectBivariateSpline(x=np.arange(h),           # Calculate the bivariate spline interpolation of G.
@@ -394,7 +427,7 @@ def get_rigid_movement(mraw_path, roi_reference, roi_size, file_shape, progressB
             err = np.linalg.norm(dp)                            # Incremental parameter norm = convergence criterion.
             dp_warp = dic.rigid_transform_matrix(dp)            # Construct the increment transformation matrix.
             try:                                                # Singular warp matrix error handling.
-                inverse_increment_warp = np.linalg.inv(dp_warp)     # Construct the inverse of increment warp materix.
+                inverse_increment_warp = np.linalg.inv(dp_warp)     # Construct the inverse of increment warp matrix.
                 warp = np.dot(warp, inverse_increment_warp)         # The updated iteration of warp matrix.
                 p = dic.param_from_rt_matrix(warp)                  # The updated iteration of transformation parameters.
             except Exception as e:
@@ -406,9 +439,9 @@ def get_rigid_movement(mraw_path, roi_reference, roi_size, file_shape, progressB
         results = np.vstack((results, p_relative))              # Update the results array.
         iters = np.append(iters, niter)                         # Append current iteration number to list.
 
-        if progressBar:
-            progressBar.setValue(i / N_inc * 100)               # Update the progress bar.
-        pbar.update(1)
+        # if progressBar:
+        #     progressBar.setValue(i / N_inc * 100)               # Update the progress bar.
+        # pbar.update(1)
 
         if debug:   # DEBUG
             if len(errors) != 0:
@@ -422,9 +455,10 @@ def get_rigid_movement(mraw_path, roi_reference, roi_size, file_shape, progressB
         iters = np.append(iters, np.argmax(iters))          # Append index of first iteration number maximum.
         iters = np.append(iters, 0)                         # Append 0 to the iters list (warning signal!)
     
-    pbar.close()
+    # pbar.close()
     show_iterinfo(iters)
-    memmap._mmap.close()                                    # Close the loaded memmap
+    if file_info['File Format'].lower == 'mraw':
+        memmap._mmap.close()                                    # Close the loaded memmap
     return results, errors, iters, increment
 
 
